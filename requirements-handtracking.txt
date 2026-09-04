@@ -1,0 +1,9 @@
+# Optional: MediaPipe hand tracking for src/hand_tracker.py.
+# Both the 0.10.x and 1.0.x Tasks APIs are supported. In headless/Docker
+# environments, prefer opencv-python-headless to avoid libGL runtime errors,
+# and install the EGL/GLES system packages (libegl1, libgl1, libgles2) that
+# MediaPipe's native delegate links against.
+#
+# numpy>=1.26,<2.0
+# opencv-python-headless>=4.8,<5.0
+# mediapipe>=0.10

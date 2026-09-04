@@ -1,0 +1,6 @@
+numpy>=1.26,<3.0
+opencv-python>=4.8,<5.0
+
+# Optional: hand tracking (src/hand_tracker.py). mediapipe pins specific
+# numpy/python versions; install into a dedicated venv if it conflicts.
+# mediapipe>=0.10

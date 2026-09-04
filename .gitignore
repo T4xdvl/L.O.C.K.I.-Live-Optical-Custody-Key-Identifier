@@ -1,0 +1,31 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Config artifacts produced by HSV calibration
+config/*.bak-*
+config/*.tmp
+
+# Evidence clips exported by CameraStream.save_clip()
+evidence/
+evidence-test/
+
+# Auto-downloaded MediaPipe model assets
+models/
+
+# L.O.C.K.I. runtime data (SQLite logs, enrolled face photos)
+data/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

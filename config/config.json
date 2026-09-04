@@ -1,0 +1,161 @@
+{
+    "camera": {
+        "device_index": 0,
+        "frame_width": 1920,
+        "frame_height": 1080,
+        "fps": 30,
+        "autofocus_disabled": true,
+        "reconnect_delay_sec": 2.0,
+        "max_reconnect_attempts": 5,
+        "buffer_seconds": 5,
+        "reader_thread_hz": 60
+    },
+    "evidence": {
+        "output_dir": "evidence",
+        "downscale_factor": 0.5
+    },
+    "slots": [
+        {
+            "id": "SLOT-01",
+            "route": "ROUTE-A",
+            "roi": [80, 80, 280, 280],
+            "description": "Wall board, top row, first position"
+        },
+        {
+            "id": "SLOT-02",
+            "route": "ROUTE-B",
+            "roi": [330, 80, 530, 280],
+            "description": "Wall board, top row, second position"
+        },
+        {
+            "id": "SLOT-03",
+            "route": "ROUTE-C",
+            "roi": [580, 80, 780, 280],
+            "description": "Wall board, top row, third position"
+        },
+        {
+            "id": "SLOT-04",
+            "route": "ROUTE-D",
+            "roi": [80, 330, 280, 530],
+            "description": "Wall board, bottom row, first position"
+        },
+        {
+            "id": "SLOT-05",
+            "route": "ROUTE-E",
+            "roi": [330, 330, 530, 530],
+            "description": "Wall board, bottom row, second position"
+        },
+        {
+            "id": "SLOT-06",
+            "route": "ROUTE-F",
+            "roi": [580, 330, 780, 530],
+            "description": "Wall board, bottom row, third position"
+        }
+    ],
+    "route_colors": {
+        "ROUTE-A": "red",
+        "ROUTE-B": "blue",
+        "ROUTE-C": "green",
+        "ROUTE-D": "orange",
+        "ROUTE-E": "red",
+        "ROUTE-F": "blue"
+    },
+    "hsv_ranges": {
+        "red": [
+            {
+                "h_min": 0,
+                "s_min": 80,
+                "v_min": 60,
+                "h_max": 10,
+                "s_max": 255,
+                "v_max": 255
+            },
+            {
+                "h_min": 160,
+                "s_min": 80,
+                "v_min": 60,
+                "h_max": 179,
+                "s_max": 255,
+                "v_max": 255
+            }
+        ],
+        "blue": [
+            {
+                "h_min": 90,
+                "s_min": 80,
+                "v_min": 40,
+                "h_max": 130,
+                "s_max": 255,
+                "v_max": 255
+            }
+        ],
+        "green": [
+            {
+                "h_min": 35,
+                "s_min": 60,
+                "v_min": 40,
+                "h_max": 85,
+                "s_max": 255,
+                "v_max": 255
+            }
+        ],
+        "orange": [
+            {
+                "h_min": 10,
+                "s_min": 90,
+                "v_min": 60,
+                "h_max": 25,
+                "s_max": 255,
+                "v_max": 255
+            }
+        ]
+    },
+    "detection": {
+        "min_coverage_ratio": 0.02,
+        "dominance_margin": 1.6,
+        "blur_kernel_size": 5
+    },
+    "hand_tracking": {
+        "enabled": true,
+        "running_mode": "video",
+        "num_hands": 2,
+        "min_hand_detection_confidence": 0.6,
+        "min_hand_presence_confidence": 0.5,
+        "min_tracking_confidence": 0.5,
+        "model_path": "models/hand_landmarker.task",
+        "model_url": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+        "bbox_padding": 0.0,
+        "center_trigger": true,
+        "edge_trigger": false
+    },
+    "face_recognition": {
+        "enabled": true,
+        "model_pack": "buffalo_s",
+        "providers": ["CPUExecutionProvider"],
+        "det_size": [640, 640],
+        "recognition_threshold": 0.45,
+        "min_face_size": 60,
+        "gallery_dir": "data/faces",
+        "fallback_driver_id": "UNIDENTIFIED"
+    },
+    "schedule": {
+        "csv_path": "config/schedule.csv",
+        "required": true
+    },
+    "database": {
+        "path": "data/logs/key_events.db"
+    },
+    "ui": {
+        "enable_pygame": true,
+        "audio": true,
+        "window_name": "L.O.C.K.I. Key Custody Monitor",
+        "alert_flash_seconds": 4.0,
+        "audio_backend": "auto"
+    },
+    "engine": {
+        "identify_cooldown_sec": 2.0,
+        "removal_timeout_sec": 3.0,
+        "demo_mode": false,
+        "demo_file": null
+    }
+}

@@ -1,0 +1,9 @@
+# Optional: face recognition for src/face_recognizer.py (InsightFace).
+# First run downloads the model pack (buffalo_s ~30 MB / buffalo_l ~100 MB)
+# into ~/.insightface. onnxruntime is InsightFace's inference backend;
+# swap in onnxruntime-gpu for CUDA acceleration.
+#
+# numpy>=1.26,<2.0
+# opencv-python-headless>=4.8,<5.0
+# onnxruntime>=1.16,<2.0
+# insightface>=0.7
