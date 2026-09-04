@@ -1,0 +1,300 @@
+===============================================================================
+ L.O.C.K.I. - Live Optical Custody & Key Identifier
+ STEP-BY-STEP SETUP & USER GUIDE
+===============================================================================
+
+Real-time computer-vision system that tracks key checkouts at shipping
+centers: identifies the driver by face, watches the key board by color,
+detects hand grabs, logs every custody event to SQLite, and saves MP4
+evidence clips.
+
+Requirements: Python 3.10+ (tested on 3.12), a webcam, and optionally a
+second display for the wall signage.
+
+-------------------------------------------------------------------------------
+STEP 1 - CREATE A VIRTUAL ENVIRONMENT
+-------------------------------------------------------------------------------
+
+From the project root:
+
+    python3 -m venv .venv
+    source .venv/bin/activate        # Linux / macOS
+    # .venv\Scripts\activate         # Windows (PowerShell: .venv\Scripts\Activate.ps1)
+
+You should see (.venv) at the start of your prompt. Activate it every time
+you open a new terminal before running any command below.
+
+-------------------------------------------------------------------------------
+STEP 2 - INSTALL PYTHON PACKAGES
+-------------------------------------------------------------------------------
+
+Core (required):
+
+    pip install -r requirements.txt          # numpy, opencv, pygame
+
+Optional extras:
+
+    pip install mediapipe                    # hand-grasp detection
+    pip install insightface onnxruntime      # face identification
+
+    NOTE: insightface downloads its model pack (~30 MB) on first run into
+    ~/.insightface. mediapipe downloads its model (~7 MB) into models/.
+
+Linux servers / Docker also need the GL system libraries:
+
+    sudo apt-get update
+    sudo apt-get install -y libegl1 libgl1 libgles2
+
+-------------------------------------------------------------------------------
+STEP 3 - QUICK TEST (NO CAMERA NEEDED)
+-------------------------------------------------------------------------------
+
+Run the built-in scripted demo:
+
+    python main.py --demo --no-pygame
+
+Over ~15 seconds it simulates three custody outcomes on a synthetic key
+board:
+
+    SUCCESS              - Driver_101 takes their assigned red key
+    WRONG_ROUTE_ALERT    - Driver_102 (blue) takes a red key
+    UNAUTHORIZED_REMOVAL - an unidentified person takes a green key
+
+Each event writes an MP4 evidence clip into evidence/ and a row into the
+SQLite database. Verify with:
+
+    sqlite3 data/logs/key_events.db "SELECT id, driver_id, taken_route, status, clip_path FROM checkouts;"
+
+Press q or ESC to quit early. If you see all three events, the
+installation works.
+
+-------------------------------------------------------------------------------
+STEP 4 - ENROLL DRIVER FACES
+-------------------------------------------------------------------------------
+
+Create one folder per driver inside data/faces/ named exactly after the
+driver_id used in the schedule, and drop 3-5 clear, well-lit face photos
+(JPG/PNG) into each:
+
+    data/faces/Driver_101/photo1.jpg
+    data/faces/Driver_101/photo2.jpg
+    data/faces/Driver_102/photo1.jpg
+    ...
+
+Tips: faces should be large (>60 px), front-facing, and without sunglasses.
+Multiple photos per driver improve matching. New photos need an engine
+restart (or call FaceRecognizer.rebuild_gallery()).
+
+If you skip this step the system still runs - every person is treated as
+UNIDENTIFIED and key removals are logged as UNAUTHORIZED_REMOVAL.
+
+-------------------------------------------------------------------------------
+STEP 5 - SET THE DAILY SCHEDULE
+-------------------------------------------------------------------------------
+
+Edit config/schedule.csv. Columns (header row required):
+
+    driver_id,assigned_route
+    Driver_101,Route_RED
+    Driver_102,Route_BLUE
+    Driver_103,Route_GREEN
+    Driver_104,Route_ORANGE
+
+Route text is case/spacing tolerant ("route blue" works too) but must
+contain one of the color words red / blue / green / orange, otherwise the
+engine refuses to start (bad rows point you at the exact line).
+
+-------------------------------------------------------------------------------
+STEP 6 - CHECK THE CAMERA CONFIGURATION
+-------------------------------------------------------------------------------
+
+Open config/config.json and review:
+
+    "camera": {
+        "device_index": 0,        <- 0 = first webcam, 1 = second, ...
+        "frame_width": 1920,      <- must match what the camera DELIVERS
+        "frame_height": 1080,
+        "fps": 30,
+        "buffer_seconds": 5       <- evidence buffer length
+    }
+
+IMPORTANT: the slot ROIs ("slots" section, [x1, y1, x2, y2] pixel boxes)
+must line up with the physical key positions in the camera's view at the
+configured resolution. If the camera delivers a different resolution than
+requested, a warning is logged at startup and ROIs will be misaligned -
+fix frame_width/height first.
+
+-------------------------------------------------------------------------------
+STEP 7 - CALIBRATE THE COLORS (IMPORTANT)
+-------------------------------------------------------------------------------
+
+Room lighting changes through the day; HSV thresholds must match YOUR
+lighting. Point the camera at the key board, then run:
+
+    python calibrate_hsv.py
+
+Controls:
+    - H/S/V Min and H/S/V Max trackbars : tune the color window
+    - h          : cycle red -> blue -> green -> orange
+    - s          : save current values to config/config.json
+    - p          : print values to the console
+    - r          : reset to last saved values
+    - q / ESC    : quit
+
+For each color: hold that fob in view and adjust until the right half of
+the preview (the mask) shows the fob in white and nothing else. Saving
+creates a timestamped backup of the config automatically.
+
+Other useful flags:
+    python calibrate_hsv.py --camera 1          # second camera
+    python calibrate_hsv.py --width 1280 --height 720
+
+-------------------------------------------------------------------------------
+STEP 8 - RUN THE SYSTEM
+-------------------------------------------------------------------------------
+
+    python main.py
+
+That starts everything: video window, wall signage (pygame), audio cues,
+hand tracking, face recognition, database logging.
+
+Useful variants:
+
+    python main.py --camera 1        # use a specific camera
+    python main.py --no-pygame       # OpenCV overlay only (no wall monitor)
+    python main.py --no-audio        # silent operation
+    python main.py --max-frames 100  # exit after N frames (testing)
+    python main.py --demo            # scripted synthetic board
+    python main.py -v                # debug logging
+
+Exit with q or ESC in the video window, or Ctrl+C in the terminal.
+
+-------------------------------------------------------------------------------
+STEP 9 - WHAT YOU SEE IN OPERATION
+-------------------------------------------------------------------------------
+
+Video window (main overlay):
+    - Green box   : key present and route correct
+    - Gray box    : slot empty / inactive
+    - Red box     : wrong-route key in the slot
+    - Amber box   : unauthorized-removal alert
+    - Top banner  : identified driver + their route, event messages
+
+Wall signage window (separate, if pygame enabled):
+    - Green border + chime  : valid checkout in progress / completed
+    - Flashing red + alarm  : WRONG ROUTE ALERT
+    - Flashing amber + alarm: UNAUTHORIZED REMOVAL
+    - Blue border           : idle / monitoring
+
+For every checkout the system:
+    1. Saves a 3-second MP4 pre-incident clip into evidence/
+    2. Writes a row into the checkouts table with the clip path
+    3. Statuses: SUCCESS | WRONG_ROUTE_ALERT | UNAUTHORIZED_REMOVAL
+
+-------------------------------------------------------------------------------
+STEP 10 - REVIEWING THE LOGS
+-------------------------------------------------------------------------------
+
+Database (SQLite at data/logs/key_events.db):
+
+    sqlite3 data/logs/key_events.db
+
+    -- last 20 events
+    SELECT * FROM checkouts ORDER BY id DESC LIMIT 20;
+
+    -- only alerts
+    SELECT * FROM checkouts WHERE status != 'SUCCESS';
+
+    -- one driver's history
+    SELECT * FROM checkouts WHERE driver_id = 'Driver_101';
+
+    -- events that have evidence clips
+    SELECT driver_id, status, clip_path FROM checkouts WHERE clip_path != '';
+
+JSON export from Python:
+
+    from src.database import DatabaseManager
+    db = DatabaseManager()
+    db.export_json("events.json", limit=500)
+    db.close()
+
+Evidence clips play in any video player (VLC, mpv).
+
+-------------------------------------------------------------------------------
+TROUBLESHOOTING
+-------------------------------------------------------------------------------
+
+"CameraStreamError: Failed to open camera N after 5 attempts"
+    - Wrong device_index, or the camera is used by another program.
+    - Try: python main.py --camera 1
+    - Linux permission check: ls -l /dev/video0 (add yourself to the
+      "video" group if needed).
+
+"Hand tracking unavailable ... grasp events disabled"
+    - mediapipe is not installed or its model failed to load. Install it,
+      or keep running without grasp triggers.
+
+"Face recognition unavailable"
+    - insightface/onnxruntime missing. Install them; the system keeps
+      running with UNIDENTIFIED as the driver id (conservative mode).
+
+"UNLISTED DRIVER" banner
+    - The face matched an enrolled folder that is not in schedule.csv.
+      Add the driver to the schedule or fix the folder name.
+
+Slot boxes do not line up with the keys
+    - Camera delivered a different resolution than config.json requests.
+      Check the startup warning, fix frame_width/height, or re-map the
+      slot ROIs.
+
+No audio / SDL audio errors
+    - Run with --no-audio, or set "audio_backend" in the "ui" section of
+      config.json (e.g. "pulse", "alsa", "dummy").
+
+Evidence clip is shorter than 3 s on the first event
+    - Normal: the rolling buffer needs ~5 s of runtime to fill up.
+
+Python version errors installing mediapipe/insightface
+    - These pin specific Python versions. Create a separate venv with the
+      Python they support, or run without them (system degrades
+      gracefully).
+
+Headless server (no monitor)
+    - Use --no-pygame; the video window is skipped automatically when no
+      display is detected. Detection, logging, and evidence clips all
+      still work.
+
+-------------------------------------------------------------------------------
+PROJECT LAYOUT (REFERENCE)
+-------------------------------------------------------------------------------
+
+    main.py                     <- run this
+    calibrate_hsv.py            <- color tuning utility
+    config/config.json          <- camera, slots, routes, HSV, engine config
+    config/schedule.csv         <- daily driver -> route assignments
+    data/faces/<driver_id>/     <- enrolled driver photos (you create)
+    data/logs/key_events.db     <- SQLite event log (auto-created)
+    evidence/                   <- MP4 evidence clips (auto-created)
+    models/                     <- auto-downloaded model assets (ignored)
+    src/
+        color_detector.py       <- HSV slot analysis (PRESENT/ABSENT/...)
+        camera.py               <- threaded capture + evidence buffer
+        hand_tracker.py         <- MediaPipe hand-vs-slot intersection
+        face_recognizer.py      <- InsightFace driver identification
+        schedule_manager.py     <- schedule CSV loader
+        database.py             <- SQLite checkouts manager
+        alarm_system.py         <- overlays, signage, chimes/alarms
+    tests/                      <- unit tests (python -m pytest tests/)
+
+-------------------------------------------------------------------------------
+DAILY OPERATION CHECKLIST
+-------------------------------------------------------------------------------
+
+    [ ] 1. activate the venv:  source .venv/bin/activate
+    [ ] 2. update config/schedule.csv for today's drivers
+    [ ] 3. (if lighting changed) re-run:  python calibrate_hsv.py
+    [ ] 4. launch:  python main.py
+    [ ] 5. at shift end: press q, review:
+           sqlite3 data/logs/key_events.db "SELECT * FROM checkouts;"
+
+===============================================================================
