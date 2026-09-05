@@ -209,8 +209,8 @@ class HSVCameraCalibrator:
         config: dict,
         config_path: Path,
         camera_index: int = 0,
-        frame_w: int = 1280,
-        frame_h: int = 720,
+        frame_w: int = 1080,
+        frame_h: int = 1920,
         active_color: str = CALIBRATION_ORDER[0],
     ) -> None:
         self.config = config
