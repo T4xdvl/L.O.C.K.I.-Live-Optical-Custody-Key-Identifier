@@ -45,6 +45,7 @@ Press ``q`` (or ``ESC``) in the video window to exit.
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
 import os
 import sys
@@ -172,12 +173,25 @@ class LockiEngine:
         self.detector = ColorDetector(config=config)
         self.schedule = ScheduleManager(config=config)
         self.db = DatabaseManager(config=config)
-        self.recognizer = FaceRecognizer(config=config)
+        try:
+            self.recognizer = FaceRecognizer(config=config)
+        except FaceRecognizerError as exc:
+            # Missing insightface: keep running; every identity event will
+            # use the fallback driver id (conservative custody stance).
+            LOGGER.warning("Face recognition unavailable (%s).", exc)
+            degraded = copy.deepcopy(config)
+            degraded.setdefault("face_recognition", {})["enabled"] = False
+            self.recognizer = FaceRecognizer(config=degraded)
 
         hand_cfg = config.get("hand_tracking", {}) or {}
-        self.hand_tracker: Optional[HandTracker] = (
-            HandTracker(config=config) if hand_cfg.get("enabled", True) else None
-        )
+        self.hand_tracker: Optional[HandTracker] = None
+        if hand_cfg.get("enabled", True):
+            try:
+                self.hand_tracker = HandTracker(config=config)
+            except HandTrackerError as exc:
+                # Missing mediapipe / model / display: grasp triggers are
+                # disabled but the rest of the pipeline keeps running.
+                LOGGER.warning("Hand tracking unavailable (%s); grasp events disabled.", exc)
         self._tracker_failures = 0
 
         self.camera = CameraStream(config=config, device_override=camera_source)
@@ -512,7 +526,9 @@ class LockiEngine:
                         LOGGER.info("Video source ended; stopping.")
                         break
                     time.sleep(0.005)  # camera hiccup: brief backoff
-                    continue                display = self.process_frame(frame)
+                    continue
+
+                display = self.process_frame(frame)
                 if self._window_ok:
                     try:
                         cv2.imshow(self.window_name, display)
@@ -565,6 +581,7 @@ def run_demo(
     fps: int = 30,
     clock: Optional[Callable[[], float]] = None,
     max_elapsed: float = 14.0,
+    stop_on_exit: bool = True,
 ) -> int:
     """Scripted end-to-end demo without any camera hardware.
 
@@ -579,6 +596,8 @@ def run_demo(
         fps: Simulated frame rate (paces the loop).
         clock: Optional replacement for ``time.monotonic`` (tests).
         max_elapsed: Stop after this many simulated seconds.
+        stop_on_exit: Stop the engine when the demo ends (tests pass
+            ``False`` to inspect state afterwards).
 
     Returns:
         Frames processed.
@@ -652,7 +671,8 @@ def run_demo(
     except KeyboardInterrupt:
         LOGGER.info("Demo interrupted.")
     finally:
-        engine.stop()
+        if stop_on_exit:
+            engine.stop()
     return processed
 
 

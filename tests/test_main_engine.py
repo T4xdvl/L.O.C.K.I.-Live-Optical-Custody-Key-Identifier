@@ -138,7 +138,11 @@ class TestEngineGrasp:
         # Media file writes go to a tmp dir; evidence export is stubbed.
         with patch.object(engine, "_save_evidence", return_value=None):
             frames = main.run_demo(
-                engine, fps=10, clock=lambda: next(ticks), max_elapsed=13.0
+                engine,
+                fps=10,
+                clock=lambda: next(ticks),
+                max_elapsed=13.0,
+                stop_on_exit=False,  # keep the DB open for assertions
             )
         assert frames > 100
         # The demo's three events are the newest in this test's own DB.

@@ -32,7 +32,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -164,9 +164,12 @@ class AlarmSystem:
         self._alert_level = AlertLevel.NONE
         self._last_flash_toggle = 0.0
         self._flash_on = False
+        self._pending_alert: Optional[Tuple[str, str, Tuple[int, int, int]]] = None
+        self._pending_success: Optional[str] = None
         self._lock = threading.RLock()
 
         self._pygame_ready = False
+        self._pygame: Any = None  # module object when signage is available
         if self._cfg.enable_pygame:
             self._init_pygame()
 
@@ -231,7 +234,7 @@ class AlarmSystem:
                 frames.append(int(volume * 32767 * value))
             return frames
 
-        def to_wav(frames: List[int]) -> "pygame.mixer.Sound":
+        def to_wav(frames: List[int]) -> Any:
             """Encode PCM frames into an in-memory WAV and wrap as a Sound."""
             buffer = io.BytesIO()
             with wave.open(buffer, "wb") as wav_file:
@@ -440,11 +443,12 @@ class AlarmSystem:
             level = self._alert_level
             flash_on = self._flash_on
             banner = self._banner_text
-            pending_alert = getattr(self, "_pending_alert", None)
-            pending_success = getattr(self, "_pending_success", None)
+            pending_alert = self._pending_alert
+            pending_success = self._pending_success
             self._pending_alert = None
             self._pending_success = None
 
+        assert self._pygame is not None
         pygame = self._pygame
         screen_w, screen_h = self._screen.get_size()
         try:
