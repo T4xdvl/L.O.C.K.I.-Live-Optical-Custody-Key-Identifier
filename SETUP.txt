@@ -112,8 +112,8 @@ Open config/config.json and review:
 
     "camera": {
         "device_index": 0,        <- 0 = first webcam, 1 = second, ...
-        "frame_width": 1920,      <- must match what the camera DELIVERS
-        "frame_height": 1080,
+        "frame_width": 1080,      <- must match what the camera DELIVERS
+        "frame_height": 1920,
         "fps": 30,
         "buffer_seconds": 5       <- evidence buffer length
     }

@@ -75,7 +75,7 @@ class TestCheckoutTracker:
 class TestEngineGrasp:
     def test_success_flow(self, engine: LockiEngine, tmp_path: Path) -> None:
         engine.simulate_identity("Driver_101")  # Route_RED per schedule
-        frame = np.full((1080, 1920, 3), (70, 70, 70), dtype=np.uint8)
+        frame = np.full((1920, 1080, 3), (70, 70, 70), dtype=np.uint8)
         x1, y1, x2, y2 = engine.detector.get_slot("SLOT-01").roi
         frame[y1:y2, x1:x2] = (0, 0, 255)  # red key in SLOT-01
 
@@ -89,7 +89,7 @@ class TestEngineGrasp:
 
     def test_wrong_route_flow(self, engine: LockiEngine) -> None:
         engine.simulate_identity("Driver_102")  # Route_BLUE
-        frame = np.full((1080, 1920, 3), (70, 70, 70), dtype=np.uint8)
+        frame = np.full((1920, 1080, 3), (70, 70, 70), dtype=np.uint8)
         x1, y1, x2, y2 = engine.detector.get_slot("SLOT-01").roi
         frame[y1:y2, x1:x2] = (0, 0, 255)  # takes a RED key instead
 
@@ -99,7 +99,7 @@ class TestEngineGrasp:
         assert record.status == "WRONG_ROUTE_ALERT"
 
     def test_unidentified_flow(self, engine: LockiEngine) -> None:
-        frame = np.full((1080, 1920, 3), (70, 70, 70), dtype=np.uint8)
+        frame = np.full((1920, 1080, 3), (70, 70, 70), dtype=np.uint8)
         x1, y1, x2, y2 = engine.detector.get_slot("SLOT-01").roi
         frame[y1:y2, x1:x2] = (0, 0, 255)
         with patch.object(engine, "_save_evidence", return_value=None):
@@ -109,13 +109,13 @@ class TestEngineGrasp:
         assert record.driver_id == "UNIDENTIFIED"
 
     def test_unknown_slot_returns_none(self, engine: LockiEngine) -> None:
-        frame = np.full((1080, 1920, 3), 70, dtype=np.uint8)
+        frame = np.full((1920, 1080, 3), 70, dtype=np.uint8)
         assert engine.handle_grasp_event("NOPE", frame) is None
 
     def test_vanished_key_uses_slot_assignment(self, engine: LockiEngine) -> None:
         # Key already gone: evidence falls back to the slot's route color.
         engine.simulate_identity("Driver_101")
-        frame = np.full((1080, 1920, 3), (70, 70, 70), dtype=np.uint8)
+        frame = np.full((1920, 1080, 3), (70, 70, 70), dtype=np.uint8)
         with patch.object(engine, "_save_evidence", return_value=None):
             engine.handle_grasp_event("SLOT-01", frame, driver="Driver_101")
         record = engine.db.recent_events()[0]
@@ -124,7 +124,7 @@ class TestEngineGrasp:
 
     def test_process_frame_smoke(self, engine: LockiEngine) -> None:
         engine.simulate_identity("Driver_101")
-        frame = np.full((1080, 1920, 3), (70, 70, 70), dtype=np.uint8)
+        frame = np.full((1920, 1080, 3), (70, 70, 70), dtype=np.uint8)
         x1, y1, x2, y2 = engine.detector.get_slot("SLOT-01").roi
         frame[y1:y2, x1:x2] = (0, 0, 255)
         out = engine.process_frame(frame)

@@ -1,8 +1,8 @@
 {
     "camera": {
         "device_index": 0,
-        "frame_width": 1920,
-        "frame_height": 1080,
+        "frame_width": 1080,
+        "frame_height": 1920,
         "fps": 30,
         "autofocus_disabled": true,
         "reconnect_delay_sec": 2.0,

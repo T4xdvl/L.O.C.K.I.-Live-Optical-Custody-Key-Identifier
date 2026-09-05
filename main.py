@@ -239,6 +239,14 @@ class LockiEngine:
         if _HAS_DISPLAY:
             try:
                 cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+                # Size the window to the stream's aspect ratio; otherwise
+                # HighGUI letterboxes the frame with white bars.
+                cam_cfg = self.config.get("camera", {}) or {}
+                frame_w = max(1, int(cam_cfg.get("frame_width", 1080)))
+                frame_h = max(1, int(cam_cfg.get("frame_height", 1920)))
+                display_h = 960
+                display_w = max(2, int(round(frame_w * display_h / frame_h)))
+                cv2.resizeWindow(self.window_name, display_w, display_h)
                 self._window_ok = True
             except cv2.error as exc:
                 LOGGER.warning("Video window unavailable (%s); running headless.", exc)
@@ -560,7 +568,7 @@ class LockiEngine:
 # Demo mode: synthetic board exercising all three custody outcomes
 # --------------------------------------------------------------------------- #
 
-BOARD_SIZE = (1080, 1920)  # (height, width) matching config ROIs
+BOARD_SIZE = (1920, 1080)  # (height, width) portrait, matching config ROIs
 BOARD_BG = (70, 70, 70)
 KEY_BGRS = {
     "red": (0, 0, 255),
