@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 import pytest
 
@@ -13,7 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
 from main import CheckoutTracker, LockiEngine  # noqa: E402
-from src.color_detector import load_config  # noqa: E402
+from src.camera import rois_outside_frame, validate_slot_rois  # noqa: E402
+from src.color_detector import ConfigError, load_config, parse_slots  # noqa: E402
 from src.database import EventStatus  # noqa: E402
 
 
@@ -148,3 +151,141 @@ class TestEngineGrasp:
         # The demo's three events are the newest in this test's own DB.
         statuses = sorted(r.status for r in engine.db.recent_events(limit=3))
         assert statuses == ["SUCCESS", "UNAUTHORIZED_REMOVAL", "WRONG_ROUTE_ALERT"]
+
+
+class TestCheckWindowAspect:
+    """``main.check_window_aspect``: white-bar (letterbox) detection guard."""
+
+    # Portrait 1080x1920 frame as delivered by the camera (h, w, c).
+    frame = np.full((1920, 1080, 3), 70, dtype=np.uint8)
+
+    def test_matching_aspect_returns_one(self) -> None:
+        with patch.object(main, "_HAS_DISPLAY", True), patch.object(
+            main.cv2, "getWindowImageRect", return_value=(0, 0, 540, 960)
+        ):
+            assert main.check_window_aspect("monitor", self.frame) == pytest.approx(1.0)
+
+    def test_mismatched_aspect_reported(self) -> None:
+        # Landscape window (960x540) showing a portrait frame: ~0.316x.
+        with patch.object(main, "_HAS_DISPLAY", True), patch.object(
+            main.cv2, "getWindowImageRect", return_value=(0, 0, 960, 540)
+        ):
+            ratio = main.check_window_aspect("monitor", self.frame)
+        assert ratio == pytest.approx(0.31640625)
+        assert not (1.0 - main.ASPECT_TOLERANCE <= ratio <= 1.0 + main.ASPECT_TOLERANCE)
+
+    def test_window_closed_returns_none(self) -> None:
+        with patch.object(main, "_HAS_DISPLAY", True), patch.object(
+            main.cv2, "getWindowImageRect", side_effect=cv2.error("no window")
+        ):
+            assert main.check_window_aspect("monitor", self.frame) is None
+
+    def test_headless_returns_none_without_probing(self) -> None:
+        with patch.object(main, "_HAS_DISPLAY", False), patch.object(
+            main.cv2, "getWindowImageRect", return_value=(0, 0, 540, 960)
+        ) as probe:
+            assert main.check_window_aspect("monitor", self.frame) is None
+        probe.assert_not_called()
+
+    @pytest.mark.parametrize("rect", [None, (0, 0, 0, 960), (0, 0, 540, 0)])
+    def test_degenerate_rect_returns_none(self, rect) -> None:
+        with patch.object(main, "_HAS_DISPLAY", True), patch.object(
+            main.cv2, "getWindowImageRect", return_value=rect
+        ):
+            assert main.check_window_aspect("monitor", self.frame) is None
+
+
+class TestSlotRoiValidation:
+    """Slot ROIs must fit inside the camera frame at startup."""
+
+    def test_rois_all_inside(self) -> None:
+        cfg = {"slots": [{"id": "A", "roi": [10, 10, 100, 100]}]}
+        assert rois_outside_frame(parse_slots(cfg), 200, 200) == []
+
+    def test_roi_overflowing_frame(self) -> None:
+        cfg = {"slots": [{"id": "A", "roi": [150, 10, 300, 100]}]}
+        assert rois_outside_frame(parse_slots(cfg), 200, 200) == ["A"]
+
+    def test_roi_negative_origin(self) -> None:
+        cfg = {"slots": [{"id": "B", "roi": [-5, 0, 50, 50]}]}
+        assert rois_outside_frame(parse_slots(cfg), 200, 200) == ["B"]
+
+    def test_zero_size_frame_reports_all(self) -> None:
+        cfg = {"slots": [{"id": "A", "roi": [0, 0, 10, 10]}, {"id": "B", "roi": [0, 0, 10, 10]}]}
+        assert rois_outside_frame(parse_slots(cfg), 0, 0) == ["A", "B"]
+
+    def test_validate_raises_config_error(self) -> None:
+        config = load_config("config/config.json")
+        config["slots"][0]["roi"] = [0, 0, 5000, 5000]
+        with pytest.raises(ConfigError, match="SLOT-01"):
+            validate_slot_rois(
+                config,
+                config["camera"]["frame_width"],
+                config["camera"]["frame_height"],
+            )
+
+    def test_engine_fails_fast_on_bad_roi(self, tmp_path: Path) -> None:
+        config = load_config("config/config.json")
+        config["slots"][0]["roi"] = [0, 0, 5000, 5000]
+        config["database"]["path"] = str(tmp_path / "events.db")
+        with pytest.raises(ConfigError, match="SLOT-01"):
+            LockiEngine(config=config)
+
+    def test_actual_smaller_than_rois_warns(
+        self, engine: LockiEngine, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with patch.object(
+            engine.camera, "actual_frame_size", return_value=(800, 1200)
+        ), caplog.at_level(logging.WARNING):
+            engine._warn_rois_vs_actual_device()
+        assert "SLOT-06" in caplog.text  # bottom-right ROI, outside 800 wide
+
+    def test_actual_smaller_than_rois_sets_overlay_warning(
+        self, engine: LockiEngine
+    ) -> None:
+        with patch.object(engine.camera, "actual_frame_size", return_value=(800, 1200)):
+            engine._warn_rois_vs_actual_device()
+        assert "ROI/CAMERA MISMATCH" in engine.alarm._system_warning
+        assert "SLOT-06" in engine.alarm._system_warning
+
+    def test_actual_fits_rois_is_silent(
+        self, engine: LockiEngine, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with patch.object(
+            engine.camera, "actual_frame_size", return_value=(1080, 1920)
+        ), caplog.at_level(logging.WARNING):
+            engine._warn_rois_vs_actual_device()
+        assert "outside" not in caplog.text.lower()
+
+    def test_actual_fits_rois_clears_overlay_warning(
+        self, engine: LockiEngine
+    ) -> None:
+        engine.alarm.set_system_warning("ROI/CAMERA MISMATCH: stale")
+        with patch.object(engine.camera, "actual_frame_size", return_value=(1080, 1920)):
+            engine._warn_rois_vs_actual_device()
+        assert engine.alarm._system_warning == ""
+
+
+class TestDebugRoisOverlay:
+    """``--debug-rois``: slot ROI alignment boxes on the displayed frame."""
+
+    def test_debug_flag_default_off(self, engine: LockiEngine) -> None:
+        assert engine.debug_rois is False
+
+    def test_overlay_off_is_identity(self, engine: LockiEngine) -> None:
+        frame = np.full((1920, 1080, 3), (70, 70, 70), dtype=np.uint8)
+        out = engine._apply_debug_overlays(frame)
+        assert out is frame  # untouched, no copy churn per frame
+
+    def test_overlay_on_draws_roi_boxes(self, engine: LockiEngine) -> None:
+        engine.debug_rois = True
+        frame = np.full((1920, 1080, 3), (70, 70, 70), dtype=np.uint8)
+        out = engine._apply_debug_overlays(frame)
+        assert out.shape == frame.shape
+        # Slot-01 border (left edge, mid height) drawn green: G dominates.
+        px = out[400, 40]
+        assert int(px[1]) > 120 and int(px[1]) > px[0] and int(px[1]) > px[2]
+
+    def test_parse_args_flag(self) -> None:
+        assert main.parse_args(["--demo"]).debug_rois is False
+        assert main.parse_args(["--demo", "--debug-rois"]).debug_rois is True

@@ -46,11 +46,17 @@ from typing import Deque, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from src.color_detector import ConfigError, load_config
+from src.color_detector import ConfigError, load_config, parse_slots
 
 LOGGER = logging.getLogger(__name__)
 
-__all__ = ["CameraConfig", "CameraStream", "CameraStreamError"]
+__all__ = [
+    "CameraConfig",
+    "CameraStream",
+    "CameraStreamError",
+    "rois_outside_frame",
+    "validate_slot_rois",
+]
 
 
 class CameraStreamError(RuntimeError):
@@ -81,6 +87,11 @@ class CameraConfig:
     def buffer_maxlen(self) -> int:
         """Frames retained in the evidence buffer (fps x seconds, min 1)."""
         return max(1, int(round(self.fps * self.buffer_seconds)))
+
+    @property
+    def frame_size(self) -> Tuple[int, int]:
+        """Configured (width, height) the camera is asked to deliver."""
+        return (self.frame_width, self.frame_height)
 
     @classmethod
     def from_config(cls, config: dict) -> "CameraConfig":
@@ -612,9 +623,80 @@ class CameraStream:
         with self._lock:
             return len(self._ring)
 
+    def actual_frame_size(self) -> Optional[Tuple[int, int]]:
+        """Native (width, height) the open device is currently delivering.
+
+        Queried from the driver, so it reflects what the hardware actually
+        negotiated (which may differ from the configured request).
+
+        Returns:
+            ``(width, height)``, or ``None`` when the device is closed or
+            the driver does not report a usable size.
+        """
+        capture = self._capture
+        if capture is None or not capture.isOpened():
+            return None
+        try:
+            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        except cv2.error:  # pragma: no cover - backend specific
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        return (width, height)
+
     def __repr__(self) -> str:  # pragma: no cover - trivial
         state = "running" if self.is_running else "stopped"
         return (
             f"CameraStream(device={self._device_index}, {state}, "
             f"buffer={self.frames_in_buffer()}/{self._cfg.buffer_maxlen})"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Slot ROI geometry validation
+# --------------------------------------------------------------------------- #
+
+
+def rois_outside_frame(slots: List[Slot], width: int, height: int) -> List[str]:
+    """Return the slot ids whose ROI is not fully inside ``width`` x ``height``.
+
+    Empty when every ROI fits. ``width``/``height`` are frame dimensions
+    (not array shapes), and a non-positive dimension reports every slot.
+    """
+    outside: List[str] = []
+    for slot in slots:
+        x1, y1, x2, y2 = slot.roi
+        fits = (
+            width > 0
+            and height > 0
+            and x1 >= 0
+            and y1 >= 0
+            and x2 <= width
+            and y2 <= height
+            and x2 > x1
+            and y2 > y1
+        )
+        if not fits:
+            outside.append(slot.slot_id)
+    return outside
+
+
+def validate_slot_rois(config: dict, width: int, height: int) -> None:
+    """Raise :class:`ConfigError` if any slot ROI falls outside the frame.
+
+    Args:
+        config: Parsed L.O.C.K.I. configuration dict.
+        width: Frame width in pixels (e.g. ``camera.frame_width``).
+        height: Frame height in pixels (e.g. ``camera.frame_height``).
+
+    Raises:
+        ConfigError: With every offending slot id and the frame size.
+    """
+    outside = rois_outside_frame(parse_slots(config), width, height)
+    if outside:
+        raise ConfigError(
+            f"Slot ROI(s) [{', '.join(outside)}] fall outside the configured "
+            f"frame ({width}x{height}); fix camera.frame_width/frame_height "
+            "or the slots' roi boxes."
         )

@@ -46,6 +46,7 @@ __all__ = [
     "AlarmConfig",
     "AlertLevel",
     "SlotVisualState",
+    "render_roi_debug",
 ]
 
 #: BGR colors used by the OpenCV overlay layer.
@@ -158,6 +159,7 @@ class AlarmSystem:
             slot.slot_id: SlotVisualState.IDLE for slot in self._slots
         }
         self._messages: List[_TimedMessage] = []
+        self._system_warning = ""  # persistent amber line under the banner
         self._banner_text = "SYSTEM READY"
         self._banner_color = COLOR_ACCENT
         self._alert_until = 0.0  # monotonic deadline of the active alert
@@ -295,6 +297,22 @@ class AlarmSystem:
                 _TimedMessage(text=text, color=color, expires_at=time.monotonic() + ttl)
             )
 
+    def set_system_warning(self, text: str) -> None:
+        """Show a persistent amber warning line under the banner.
+
+        Unlike :meth:`push_message` messages, this line has no expiry and
+        stays visible until :meth:`clear_system_warning` is called - used
+        for conditions like "camera size smaller than slot ROIs" that last
+        for the whole session.
+        """
+        with self._lock:
+            self._system_warning = text
+
+    def clear_system_warning(self) -> None:
+        """Remove the persistent warning line (idempotent)."""
+        with self._lock:
+            self._system_warning = ""
+
     # ------------------------------------------------------------------ #
     # Alert triggering
     # ------------------------------------------------------------------ #
@@ -360,6 +378,7 @@ class AlarmSystem:
             slot_states = dict(self._slot_states)
             banner_text, banner_color = self._banner_text, self._banner_color
             messages = list(self._messages)
+            system_warning = self._system_warning
             if now < self._alert_until:
                 flash_border = (
                     COLOR_ALERT
@@ -401,8 +420,8 @@ class AlarmSystem:
                     1,
                 )
 
-        # 3. Banner + message stack (translucent backing bar for legibility).
-        bar_height = 34 + 26 * len(messages)
+        # 3. Banner + message stack + persistent warning (translucent bar).
+        bar_height = 34 + 26 * (len(messages) + (1 if system_warning else 0))
         overlay_layer = canvas.copy()
         cv2.rectangle(overlay_layer, (0, 0), (width, bar_height), (0, 0, 0), -1)
         cv2.addWeighted(overlay_layer, 0.55, canvas, 0.45, 0, canvas)
@@ -424,6 +443,17 @@ class AlarmSystem:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
                 message.color,
+                1,
+                cv2.LINE_AA,
+            )
+        if system_warning:
+            cv2.putText(
+                canvas,
+                system_warning,
+                (12, 52 + 26 * len(messages)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                COLOR_UNAUTHORIZED,
                 1,
                 cv2.LINE_AA,
             )
@@ -511,3 +541,58 @@ class AlarmSystem:
             f"AlarmSystem(slots={len(self._slots)}, "
             f"signage={self._pygame_ready}, audio={self._cfg.audio})"
         )
+
+
+def render_roi_debug(
+    frame: np.ndarray,
+    slots: List[Slot],
+    frame_size: Optional[Tuple[int, int]] = None,
+) -> np.ndarray:
+    """Return a copy of ``frame`` with slot ROIs drawn for alignment checks.
+
+    Debug aid (``main.py --debug-rois``): every configured slot box is
+    outlined and labeled with its id/route/key color so an operator can
+    verify the ROIs line up with the physical board at a glance.
+
+    * Boxes whose ROI fits ``frame_size`` are green; boxes outside are red.
+    * ``frame_size`` is the camera's *actual* delivered size; ``None`` uses
+      the frame's own shape (the operating assumption when unknown).
+    * A white border and ``WxH`` caption mark the full frame bounds, so
+      ROIs that fall outside the delivered picture are obvious.
+
+    Safe on headless hosts: pure numpy/cv2 drawing.
+    """
+    canvas = frame.copy()
+    height, width = canvas.shape[:2]
+    bounds_w, bounds_h = frame_size if frame_size is not None else (width, height)
+
+    # Full-frame bounds so out-of-picture ROIs are visually obvious.
+    cv2.rectangle(canvas, (0, 0), (width - 1, height - 1), COLOR_TEXT, 1)
+    cv2.putText(
+        canvas,
+        f"frame {bounds_w}x{bounds_h}",
+        (12, height - 16),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        COLOR_TEXT,
+        1,
+        cv2.LINE_AA,
+    )
+
+    for slot in slots:
+        x1, y1, x2, y2 = slot.roi
+        fits = x1 >= 0 and y1 >= 0 and x2 <= bounds_w and y2 <= bounds_h
+        color = COLOR_OK if fits else COLOR_ALERT
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+        label = f"{slot.slot_id} ({slot.route or 'UNASSIGNED'})"
+        cv2.putText(
+            canvas,
+            label,
+            (x1 + 2, max(16, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
+    return canvas

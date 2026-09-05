@@ -17,7 +17,9 @@ from src.alarm_system import (  # noqa: E402
     COLOR_OK,
     AlertLevel,
     SlotVisualState,
+    render_roi_debug,
 )
+from src.color_detector import Slot  # noqa: E402
 
 
 @pytest.fixture()
@@ -77,6 +79,30 @@ class TestOverlays:
         assert out[59, 35][1] > 120  # green-dominant border on SLOT-01
         assert out[59, 95][2] > 120  # red-dominant border on SLOT-02
 
+    def test_system_warning_grows_bar(self, alarm: AlarmSystem) -> None:
+        """A persistent warning extends the dimmed backing bar downward."""
+        frame = np.full((120, 200, 3), 40, dtype=np.uint8)
+        # Sample column 5: left of the SLOT-01 border (x1=10), clear of any
+        # drawing. No warning means the bar ends at row 34 -> raw frame.
+        plain = alarm.render_overlay(frame)
+        assert plain[50, 5].tolist() == [40, 40, 40]
+        # With a warning the bar covers row 50 (dimmed to ~45% brightness).
+        alarm.set_system_warning("ROI/CAMERA MISMATCH: test")
+        warned = alarm.render_overlay(frame)
+        assert warned[50, 5].tolist() != [40, 40, 40]
+        assert int(warned[50, 5][0]) < 30  # dimmed toward black
+        # Clearing restores the short bar.
+        alarm.clear_system_warning()
+        cleared = alarm.render_overlay(frame)
+        assert cleared[50, 5].tolist() == [40, 40, 40]
+
+    def test_system_warning_renders_amber_text(self, alarm: AlarmSystem) -> None:
+        alarm.set_system_warning("ROI/CAMERA MISMATCH: SLOT-06")
+        frame = np.full((120, 200, 3), 40, dtype=np.uint8)
+        out = alarm.render_overlay(frame)
+        # Amber (0, 160, 255): strong blue/red channel around the text row.
+        assert (out[:, :, 2] > 180).sum() > 0
+        alarm.clear_system_warning()
     def test_unknown_slot_state_ignored(self, alarm: AlarmSystem) -> None:
         alarm.set_slot_state("NOPE", SlotVisualState.OK)  # must not raise
 
@@ -126,6 +152,31 @@ class TestOverlays:
         with caplog.at_level("WARNING"):
             alarm.trigger_alert(AlertLevel.CRITICAL, "UNAUTHORIZED REMOVAL", "detail")
         assert "UNAUTHORIZED" in caplog.text
+
+
+class TestRoiDebugOverlay:
+    """``render_roi_debug``: alignment boxes for --debug-rois."""
+
+    def test_inbounds_slots_green(self) -> None:
+        frame = np.full((200, 200, 3), 40, dtype=np.uint8)
+        out = render_roi_debug(frame, [Slot("A", "R", (10, 10, 60, 60))], (200, 200))
+        # Left border of slot A: green-dominant.
+        assert out[35, 10][1] > 120
+        # Frame bound caption is drawn (white) near the bottom.
+        assert (out[184:190, :, 0] > 150).sum() > 0
+
+    def test_out_of_bounds_slot_red(self) -> None:
+        frame = np.full((200, 200, 3), 40, dtype=np.uint8)
+        out = render_roi_debug(
+            frame, [Slot("A", "R", (150, 150, 400, 400))], (200, 200)
+        )
+        # Left border of the overflowing ROI clips at the frame edge.
+        assert out[170, 150][2] > 120  # red-dominant: ROI past the bounds
+
+    def test_returns_copy(self) -> None:
+        frame = np.full((200, 200, 3), 40, dtype=np.uint8)
+        out = render_roi_debug(frame, [])
+        assert out is not frame
 
 
 class TestPygameUnavailable:

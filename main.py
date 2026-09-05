@@ -57,8 +57,13 @@ from typing import Callable, Dict, List, Optional
 import cv2
 import numpy as np
 
-from src.alarm_system import AlertLevel, AlarmSystem, SlotVisualState
-from src.camera import CameraStream, CameraStreamError
+from src.alarm_system import AlertLevel, AlarmSystem, SlotVisualState, render_roi_debug
+from src.camera import (
+    CameraStream,
+    CameraStreamError,
+    rois_outside_frame,
+    validate_slot_rois,
+)
 from src.color_detector import (
     ColorDetector,
     ConfigError,
@@ -225,6 +230,7 @@ class LockiEngine:
         self._tracker_failures = 0
 
         self.camera = CameraStream(config=config, device_override=camera_source)
+        self._validate_roi_geometry()
         self.alarm = AlarmSystem(config=config)
 
         engine_cfg = config.get("engine", {}) or {}
@@ -241,6 +247,7 @@ class LockiEngine:
         self.current_driver: Optional[str] = None
         self._identity_until = 0.0
         self._aspect_check_due = 0.0  # throttled window/stream aspect probe
+        self.debug_rois = False  # --debug-rois: overlay slot ROI boxes
         self._running = False
 
         fallback = self.recognizer.config.fallback_driver_id
@@ -251,6 +258,69 @@ class LockiEngine:
             self.hand_tracker is not None,
         )
         self._fallback_driver_id = fallback
+
+    # ------------------------------------------------------------------ #
+    # Geometry validation
+    # ------------------------------------------------------------------ #
+
+    def _validate_roi_geometry(self) -> None:
+        """Ensure every slot ROI fits the camera's configured frame size.
+
+        Runs at engine construction against ``camera.frame_width`` /
+        ``frame_height`` so a portrait/landscape mismatch (e.g. ROIs drawn
+        for a 1920-wide board while the camera asks for 1080 columns) fails
+        loudly at startup instead of silently reading empty slots.
+
+        Raises:
+            ConfigError: If any slot ROI falls outside the configured frame.
+        """
+        cam_cfg = self.config.get("camera", {}) or {}
+        validate_slot_rois(
+            self.config,
+            max(1, int(cam_cfg.get("frame_width", 0))),
+            max(1, int(cam_cfg.get("frame_height", 0))),
+        )
+
+    def _warn_rois_vs_actual_device(self) -> None:
+        """Warn when slot ROIs do not fit the device's *actual* output size.
+
+        The configured resolution is only a request: drivers silently fall
+        back to the nearest supported mode. When the negotiated size is
+        smaller than what the ROIs assume, detection windows would land
+        outside the delivered picture (empty slots) - so log the warning
+        and surface it as a persistent overlay line, but keep running
+        since the ROIs may still be valid for this deployment.
+        """
+        actual = self.camera.actual_frame_size()
+        if actual is None:
+            return
+        actual_w, actual_h = actual
+        outside = rois_outside_frame(self.detector.slots, actual_w, actual_h)
+        if outside:
+            LOGGER.warning(
+                "Camera delivered %dx%d (smaller than configured); slot ROI(s) "
+                "[%s] would fall outside the actual picture and never detect.",
+                actual_w,
+                actual_h,
+                ", ".join(outside),
+            )
+            self.alarm.set_system_warning(
+                f"ROI/CAMERA MISMATCH: {actual_w}x{actual_h} too small for "
+                f"[{', '.join(outside)}]".strip()
+            )
+        else:
+            self.alarm.clear_system_warning()
+
+    def _apply_debug_overlays(self, display: np.ndarray) -> np.ndarray:
+        """Overlay slot ROI alignment boxes when ``--debug-rois`` is on.
+
+        Uses the camera's actual delivered size when the device is live;
+        falls back to the frame's own shape (demo/replay) otherwise.
+        """
+        if not self.debug_rois:
+            return display
+        actual = self.camera.actual_frame_size() if self.camera.is_running else None
+        return render_roi_debug(display, self.detector.slots, frame_size=actual)
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -266,15 +336,20 @@ class LockiEngine:
         """
         if with_camera:
             self.camera.start()
+            self._warn_rois_vs_actual_device()
         self._window_ok = False
         if _HAS_DISPLAY:
             try:
                 cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
                 # Size the window to the stream's aspect ratio; otherwise
-                # HighGUI letterboxes the frame with white bars.
+                # HighGUI letterboxes the frame with white bars. Prefer the
+                # device's *actual* negotiated size over the configured one.
                 cam_cfg = self.config.get("camera", {}) or {}
                 frame_w = max(1, int(cam_cfg.get("frame_width", 1080)))
                 frame_h = max(1, int(cam_cfg.get("frame_height", 1920)))
+                actual = self.camera.actual_frame_size()
+                if actual is not None:
+                    frame_w, frame_h = actual
                 display_h = 960
                 display_w = max(2, int(round(frame_w * display_h / frame_h)))
                 cv2.resizeWindow(self.window_name, display_w, display_h)
@@ -567,7 +642,7 @@ class LockiEngine:
                     time.sleep(0.005)  # camera hiccup: brief backoff
                     continue
 
-                display = self.process_frame(frame)
+                display = self._apply_debug_overlays(self.process_frame(frame))
                 if self._window_ok:
                     now_monotonic = time.monotonic()
                     if now_monotonic >= self._aspect_check_due:
@@ -704,7 +779,7 @@ def run_demo(
                     fired[index] = True
 
             engine.camera.submit_frame(frame)  # feed evidence buffer too
-            display = engine.process_frame(frame)
+            display = engine._apply_debug_overlays(engine.process_frame(frame))
             if getattr(engine, "_window_ok", False):
                 try:
                     cv2.imshow(engine.window_name, display)
@@ -751,6 +826,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Run the scripted synthetic-board demo (no camera required)",
     )
     parser.add_argument("--max-frames", type=int, default=None, help="Stop after N frames")
+    parser.add_argument(
+        "--debug-rois",
+        action="store_true",
+        help="Overlay slot ROI boxes + frame bounds for alignment checks",
+    )
     parser.add_argument("--no-pygame", action="store_true", help="Disable signage window")
     parser.add_argument("--no-audio", action="store_true", help="Disable chimes/alarms")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
@@ -782,6 +862,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         engine = LockiEngine(config=config, camera_source=camera_source)
+        engine.debug_rois = args.debug_rois  # applied before the loop starts
     except (ConfigError, ScheduleError, FaceRecognizerError) as exc:
         LOGGER.error("Engine startup failed: %s", exc)
         return 3
