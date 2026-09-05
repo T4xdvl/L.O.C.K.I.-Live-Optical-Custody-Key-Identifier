@@ -18,37 +18,37 @@
         {
             "id": "SLOT-01",
             "route": "ROUTE-A",
-            "roi": [80, 80, 280, 280],
+            "roi": [40, 240, 360, 560],
             "description": "Wall board, top row, first position"
         },
         {
             "id": "SLOT-02",
             "route": "ROUTE-B",
-            "roi": [330, 80, 530, 280],
+            "roi": [380, 240, 700, 560],
             "description": "Wall board, top row, second position"
         },
         {
             "id": "SLOT-03",
             "route": "ROUTE-C",
-            "roi": [580, 80, 780, 280],
+            "roi": [720, 240, 1040, 560],
             "description": "Wall board, top row, third position"
         },
         {
             "id": "SLOT-04",
             "route": "ROUTE-D",
-            "roi": [80, 330, 280, 530],
+            "roi": [40, 1360, 360, 1680],
             "description": "Wall board, bottom row, first position"
         },
         {
             "id": "SLOT-05",
             "route": "ROUTE-E",
-            "roi": [330, 330, 530, 530],
+            "roi": [380, 1360, 700, 1680],
             "description": "Wall board, bottom row, second position"
         },
         {
             "id": "SLOT-06",
             "route": "ROUTE-F",
-            "roi": [580, 330, 780, 530],
+            "roi": [720, 1360, 1040, 1680],
             "description": "Wall board, bottom row, third position"
         }
     ],

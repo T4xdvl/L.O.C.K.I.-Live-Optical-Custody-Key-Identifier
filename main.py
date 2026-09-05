@@ -73,7 +73,7 @@ from src.schedule_manager import ScheduleError, ScheduleManager
 
 LOGGER = logging.getLogger("locki.main")
 
-__all__ = ["CheckoutTracker", "LockiEngine", "main"]
+__all__ = ["CheckoutTracker", "LockiEngine", "check_window_aspect", "main"]
 
 #: Length of the evidence clip exported when a checkout fires.
 EVIDENCE_CLIP_SECONDS = 3.0
@@ -81,6 +81,10 @@ EVIDENCE_CLIP_SECONDS = 3.0
 GRASP_CONFIRM_SECONDS = 0.4
 #: Consecutive hand-tracker failures before the engine disables that stage.
 MAX_TRACKER_FAILURES = 3
+#: Seconds between window/stream aspect-divergence checks (throttled).
+ASPECT_CHECK_INTERVAL_SEC = 5.0
+#: Allowed relative divergence before the letterbox warning fires (15%).
+ASPECT_TOLERANCE = 0.15
 
 
 def utc_now_iso() -> str:
@@ -102,6 +106,32 @@ def _display_available() -> bool:
 
 #: Cached once: display presence does not change mid-run.
 _HAS_DISPLAY = _display_available()
+
+
+def check_window_aspect(window_name: str, frame: np.ndarray) -> Optional[float]:
+    """Compare the OpenCV window's image rect to the frame's aspect ratio.
+
+    HighGUI letterboxes a frame whose aspect ratio does not match the
+    window's image area — visible as white bars on the sides. This probe
+    quantifies the mismatch so the engine can warn the operator.
+
+    Returns:
+        ``window_aspect / frame_aspect`` (1.0 = perfect match), or ``None``
+        when it cannot be measured (headless host, window not yet created,
+        window closed by the OS, or degenerate geometry).
+    """
+    if not _HAS_DISPLAY or not window_name:
+        return None
+    try:
+        rect = cv2.getWindowImageRect(window_name)
+    except cv2.error:
+        return None
+    if not rect or rect[2] <= 0 or rect[3] <= 0:
+        return None
+    frame_h, frame_w = frame.shape[:2]
+    if frame_h <= 0 or frame_w <= 0:
+        return None
+    return (frame_w / frame_h) / (rect[2] / rect[3])
 
 
 class CheckoutTracker:
@@ -210,6 +240,7 @@ class LockiEngine:
 
         self.current_driver: Optional[str] = None
         self._identity_until = 0.0
+        self._aspect_check_due = 0.0  # throttled window/stream aspect probe
         self._running = False
 
         fallback = self.recognizer.config.fallback_driver_id
@@ -538,6 +569,21 @@ class LockiEngine:
 
                 display = self.process_frame(frame)
                 if self._window_ok:
+                    now_monotonic = time.monotonic()
+                    if now_monotonic >= self._aspect_check_due:
+                        self._aspect_check_due = now_monotonic + ASPECT_CHECK_INTERVAL_SEC
+                        divergence = check_window_aspect(self.window_name, display)
+                        if divergence is not None and not (
+                            1.0 - ASPECT_TOLERANCE
+                            <= divergence
+                            <= 1.0 + ASPECT_TOLERANCE
+                        ):
+                            LOGGER.warning(
+                                "Window/stream aspect mismatch (%.2fx): OpenCV is "
+                                "letterboxing the stream (white bars). Resize the "
+                                "window or fix camera frame_width/frame_height.",
+                                divergence,
+                            )
                     try:
                         cv2.imshow(self.window_name, display)
                     except cv2.error:
